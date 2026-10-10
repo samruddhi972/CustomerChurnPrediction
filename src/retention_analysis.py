@@ -1,43 +1,56 @@
-import json
+import os
+import joblib
 import pandas as pd
 
-from predict import predict_churn
 from retention_strategy import recommend_retention_action
 
-
 DATA_FILE = "data/E Commerce Dataset.xlsx"
+MODEL_FILE = "model/customer_churn_model.joblib"
 OUTPUT_FILE = "predictions/customer_retention_recommendations.csv"
 
-
 def run_retention_analysis():
-    # Load the actual customer dataset
+    # Load dataset and trained model
     df = pd.read_excel(DATA_FILE, sheet_name="E Comm")
+    saved_data = joblib.load(MODEL_FILE)
+    model = saved_data["model"]
+
+    print(f"Loaded {len(df)} customer records.")
+    print("Generating predictions in batch...")
+
+    # Use the exact features expected by the trained model
+    feature_columns = (
+    saved_data["numerical_features"]
+    + saved_data["categorical_features"]
+    )
+    X = df[feature_columns]
+
+    # Predict all customers together
+    probabilities = model.predict_proba(X)[:, 1]
+    predictions = model.predict(X)
 
     results = []
 
-    print(f"Loaded {len(df)} customer records.")
-    print("Generating churn predictions and retention recommendations...")
+    for i, (_, customer) in enumerate(df.iterrows()):
+        churn_probability = float(probabilities[i])
+        predicted_churn = int(predictions[i])
 
-    for _, customer in df.iterrows():
-        customer_data = customer.to_frame().T
+        if churn_probability >= 0.7:
+            risk_category = "High"
+        elif churn_probability >= 0.4:
+            risk_category = "Medium"
+        else:
+            risk_category = "Low"
 
-        # Predict churn using the trained model
-        prediction = predict_churn(customer_data)
-
-        # Use actual customer behaviour for retention recommendations
         customer_details = customer.to_dict()
 
         recommendation = recommend_retention_action(
-            customer_details,
-            prediction["risk_category"]
+            customer_details, risk_category
         )
 
         results.append({
             "CustomerID": customer.get("CustomerID"),
-            "ChurnProbability": round(
-                prediction["churn_probability"], 4
-            ),
-            "PredictedChurn": prediction["predicted_churn"],
+            "ChurnProbability": round(churn_probability, 4),
+            "PredictedChurn": predicted_churn,
             "RiskCategory": recommendation["risk_category"],
             "RetentionPriority": recommendation["priority"],
             "RecommendedActions": " | ".join(
@@ -45,9 +58,9 @@ def run_retention_analysis():
             )
         })
 
-    # Save the final customer-level results
     output = pd.DataFrame(results)
 
+    os.makedirs("predictions", exist_ok=True)
     output.to_csv(OUTPUT_FILE, index=False)
 
     print("\nRetention Analysis Completed Successfully!")
